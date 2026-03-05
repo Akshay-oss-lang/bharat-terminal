@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: bharat
+      POSTGRES_PASSWORD: bharat
+      POSTGRES_DB: bharat
+    ports:
+      - '5432:5432'
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - '6379:6379'
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - '9092:9092'
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.1
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - '9200:9200'
+
+  api:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+      - elasticsearch
+    ports:
+      - '8000:8000'
+
+  worker:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      - api
+    command: celery -A app.workers.celery_worker.celery_app worker --loglevel=INFO
+
+  beat:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      - worker
+    command: celery -A app.workers.celery_worker.celery_app beat --loglevel=INFO
+
+  processor:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      - worker
+    command: python -c "from app.workers.celery_worker import process_stream; process_stream()"
+
+volumes:
+  pg_data:
